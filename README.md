@@ -1,3 +1,4 @@
+[![LINUX DO](https://shorturl.at/ggSqS)](https://linux.do)
 # PPTypst
 
 在 PowerPoint 里编写 Typst，实时预览后插入为 SVG，并支持选中已有对象后继续更新。
