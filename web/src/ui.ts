@@ -1,8 +1,11 @@
 import { DOM_IDS, DEFAULTS, BUTTON_TEXT, STORAGE_KEYS, FILL_COLOR_DISABLED } from "./constants.js";
-import { getInputElement, getHTMLElement, getAreaElement, getButtonElement } from "./utils/dom.js";
+import { getInputElement, getHTMLElement, getButtonElement } from "./utils/dom.js";
 import { insertOrUpdateFormula, bulkUpdateFontSize } from "./insertion.js";
 import { getStoredValue } from "./utils/storage.js";
 import { handleGenerateFromFile } from "./file/file.js";
+import { getTypstEditorValue, refreshTypstEditorContext, setTypstEditorValue } from "./editor.js";
+
+type Tone = "neutral" | "ok" | "warn" | "error";
 
 /**
  * Initializes the UI state.
@@ -27,6 +30,15 @@ export function initializeUIState() {
   if (savedPreviewFill !== null) {
     setPreviewFillEnabled(savedPreviewFill === "true");
   }
+
+  setWorkspaceMode(
+    "新建模式",
+    "未选中 Typst 对象，插入会创建新的图形。",
+    "neutral",
+  );
+  setTypstServiceState("正在检测本地 Typst 服务。", false, "neutral");
+  setAssistServiceState("智能补全初始化中...", false, "neutral");
+  setPreviewState("预览待输入", "输入 Typst 内容后会自动刷新本地编译预览。", "neutral");
 }
 
 /**
@@ -46,9 +58,6 @@ export function setupEventListeners() {
     }
   };
 
-  const typstInput = getAreaElement(DOM_IDS.TYPST_INPUT);
-  typstInput.addEventListener("keydown", handleCtrlEnter);
-
   const fontSizeInput = getInputElement(DOM_IDS.FONT_SIZE);
   fontSizeInput.addEventListener("keydown", handleCtrlEnter);
 
@@ -61,8 +70,10 @@ export function setupEventListeners() {
  */
 export function setStatus(message: string, isError = false) {
   const statusElement = getHTMLElement(DOM_IDS.STATUS);
+  const statusBar = getHTMLElement(DOM_IDS.STATUS_BAR);
   statusElement.textContent = message || "";
   statusElement.classList.toggle("error", isError);
+  statusBar.dataset.tone = isError ? "error" : "neutral";
 }
 
 /**
@@ -77,6 +88,7 @@ export function getFontSize(): string {
  */
 export function setFontSize(fontSize: string) {
   getInputElement(DOM_IDS.FONT_SIZE).value = fontSize;
+  refreshTypstEditorContext();
 }
 
 /**
@@ -130,22 +142,27 @@ export function setFillColor(color: string | null) {
  * @returns Typst source code from the UI input
  */
 export function getTypstCode(): string {
-  return getAreaElement(DOM_IDS.TYPST_INPUT).value;
+  return getTypstEditorValue();
 }
 
 /**
  * Sets the Typst code in the UI input.
  */
 export function setTypstCode(typstCode: string) {
-  getAreaElement(DOM_IDS.TYPST_INPUT).value = typstCode;
+  setTypstEditorValue(typstCode);
 }
 
 /**
  * Updates the button text based on whether a Typst shape is selected.
  */
 export function setButtonText(isEditingExistingFormula: boolean) {
-  const button = getHTMLElement(DOM_IDS.INSERT_BTN) as HTMLButtonElement;
-  button.innerHTML = isEditingExistingFormula ? BUTTON_TEXT.UPDATE : BUTTON_TEXT.INSERT;
+  const button = getButtonElement(DOM_IDS.INSERT_BTN);
+  const label = isEditingExistingFormula ? BUTTON_TEXT.UPDATE : BUTTON_TEXT.INSERT;
+  button.innerHTML = `
+    <span class="primary-btn-label">${label}</span>
+    <span class="primary-btn-shortcut" aria-hidden="true">${BUTTON_TEXT.INSERT_SHORTCUT}</span>
+  `;
+  button.setAttribute("aria-label", `${label}，快捷键 ${BUTTON_TEXT.INSERT_SHORTCUT}`);
 
   if (isEditingExistingFormula) {
     button.classList.add("update-mode");
@@ -169,7 +186,7 @@ export function setButtonEnabled(enabled: boolean) {
  */
 export function setBulkUpdateButtonVisible(visible: boolean) {
   const button = getButtonElement(DOM_IDS.BULK_UPDATE_BTN);
-  button.style.display = visible ? "block" : "none";
+  button.hidden = !visible;
 }
 
 /**
@@ -186,6 +203,7 @@ export function getMathModeEnabled(): boolean {
 export function setMathModeEnabled(enabled: boolean) {
   const checkbox = getInputElement(DOM_IDS.MATH_MODE_ENABLED);
   checkbox.checked = enabled;
+  refreshTypstEditorContext();
 }
 
 /**
@@ -194,4 +212,77 @@ export function setMathModeEnabled(enabled: boolean) {
 export function setFileButtonText(isEditingExistingFormula: boolean) {
   const button = getButtonElement(DOM_IDS.GENERATE_FROM_FILE_BTN);
   button.textContent = isEditingExistingFormula ? BUTTON_TEXT.UPDATE_FROM_FILE : BUTTON_TEXT.GENERATE_FROM_FILE;
+}
+
+/**
+ * 更新顶部的工作模式摘要。
+ */
+export function setWorkspaceMode(title: string, hint: string, tone: Tone = "neutral") {
+  const titleElement = getHTMLElement(DOM_IDS.WORKSPACE_MODE_VALUE);
+  const hintElement = getHTMLElement(DOM_IDS.WORKSPACE_MODE_HINT);
+
+  titleElement.textContent = title;
+  hintElement.textContent = hint;
+  applyTone(titleElement, tone);
+}
+
+/**
+ * 更新 Typst 服务状态徽标。
+ */
+export function setTypstServiceState(message: string, available: boolean, tone?: Tone) {
+  const resolvedTone = tone || (available ? "ok" : "error");
+  const label = resolvedTone === "neutral"
+    ? "Typst 待检测"
+    : available
+      ? "Typst 已连接"
+      : "Typst 未连接";
+  setChip(DOM_IDS.TYPST_SERVICE_STATUS, label, message, resolvedTone);
+}
+
+/**
+ * 更新智能补全状态徽标。
+ */
+export function setAssistServiceState(message: string, isError: boolean, tone?: Tone) {
+  let label = "补全可用";
+  let resolvedTone = tone || (isError ? "warn" : "ok");
+
+  if (resolvedTone === "neutral" || /初始化/u.test(message) || /正在连接/u.test(message)) {
+    label = "补全初始化中";
+    resolvedTone = tone || "neutral";
+  } else if (isError || /退回基础编辑模式/u.test(message)) {
+    label = "基础编辑模式";
+  } else if (/已连接/u.test(message)) {
+    label = "补全已连接";
+  } else if (/连接/u.test(message)) {
+    label = "补全连接中";
+    resolvedTone = tone || "neutral";
+  }
+
+  setChip(DOM_IDS.ASSIST_SERVICE_STATUS, label, message, resolvedTone);
+}
+
+/**
+ * 更新预览区的状态和辅助说明。
+ */
+export function setPreviewState(label: string, detail: string, tone: Tone = "neutral") {
+  setChip(DOM_IDS.PREVIEW_STATE_STATUS, label, detail, tone);
+  const previewMeta = getHTMLElement(DOM_IDS.PREVIEW_META);
+  previewMeta.textContent = detail;
+}
+
+/**
+ * 统一更新状态徽标文字、提示和语义色。
+ */
+function setChip(id: string, label: string, title: string, tone: Tone) {
+  const element = getHTMLElement(id);
+  element.textContent = label;
+  element.title = title;
+  applyTone(element, tone);
+}
+
+/**
+ * 通过 data-tone 给元素挂上可复用的语义色。
+ */
+function applyTone(element: HTMLElement, tone: Tone) {
+  element.dataset.tone = tone;
 }

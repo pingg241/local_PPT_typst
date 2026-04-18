@@ -1,101 +1,4 @@
-/**
- * Typst.ts integration for compiling and rendering Typst code to SVG.
- *
- * This makes use of the typst.ts library by Myriad Dreamin:
- * https://myriad-dreamin.github.io/typst.ts/
- */
-
-import type * as typstWeb from "@myriaddreamin/typst.ts";
-import { createTypstCompiler, createTypstRenderer } from "@myriaddreamin/typst.ts";
-import {
-  disableDefaultFontAssets,
-  loadFonts,
-  withPackageRegistry,
-  withAccessModel,
-} from "@myriaddreamin/typst.ts/dist/esm/options.init.mjs";
-import { NodeFetchPackageRegistry } from "@myriaddreamin/typst.ts/dist/esm/fs/package.node.mjs";
-import { MemoryAccessModel } from "@myriaddreamin/typst.ts/dist/esm/fs/memory.mjs";
-import { cachedFontInitOptions } from "./registry/font-cache";
-
-// @ts-expect-error ?url import
-import mathFontUrl from "/math-font.ttf?url";
-
-// @ts-expect-error WASM module import
-import typstCompilerWasm from "@myriaddreamin/typst-ts-web-compiler/pkg/typst_ts_web_compiler_bg.wasm?url";
-// @ts-expect-error WASM module import
-import typstRendererWasm from "@myriaddreamin/typst-ts-renderer/pkg/typst_ts_renderer_bg.wasm?url";
-import { registryRequest } from "./registry/registry";
-
-let compiler: typstWeb.TypstCompiler;
-let renderer: typstWeb.TypstRenderer;
-
-/**
- * Initializes both the Typst compiler and renderer.
- */
-export async function initTypst() {
-  await initCompiler();
-  await initRenderer();
-}
-
-/**
- * Initializes the Typst compiler.
- *
- * See also https://myriad-dreamin.github.io/typst.ts/cookery/guide/all-in-one.html#label-Initializing%20using%20the%20low-level%20API
- * And https://github.com/Myriad-Dreamin/typst.ts/blob/2a8b32d8cca70cc4d105fef074d2f35fc7546450/templates/compiler-wasm-cjs/src/main.package.cts#L20-L39
- */
-async function initCompiler() {
-  compiler = createTypstCompiler();
-  const accessModel = new MemoryAccessModel();
-  await compiler.init({
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-return
-    getModule: () => typstCompilerWasm,
-    beforeBuild: [
-      disableDefaultFontAssets(),
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
-      loadFonts([mathFontUrl]),
-      ...cachedFontInitOptions().beforeBuild,
-      withAccessModel(accessModel),
-      withPackageRegistry(
-        new NodeFetchPackageRegistry(accessModel, registryRequest),
-      ),
-    ],
-  });
-  console.log("Typst compiler initialized");
-}
-
-/**
- * Initializes the Typst renderer.
- *
- * See also https://myriad-dreamin.github.io/typst.ts/cookery/guide/all-in-one.html#label-Initializing%20using%20the%20low-level%20API
- */
-async function initRenderer() {
-  renderer = createTypstRenderer();
-  await renderer.init({
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-return
-    getModule: () => typstRendererWasm,
-  });
-  console.log("Typst renderer initialized");
-}
-
-/**
- * Builds the complete Typst code with page setup and font size.
- *
- * Note: If you change the number of lines added here, make sure to update
- * the diagnostic range offset in preview.ts accordingly.
- *
- * @param rawCode The user's Typst code
- * @param fontSize Font size in points
- * @param mathMode Whether to wrap the code in display math delimiters
- * @returns Complete Typst code ready for compilation
- */
-function buildRawTypstString(rawCode: string, fontSize: string, mathMode: boolean): string {
-  let code = rawCode;
-  if (mathMode) {
-    code = `$\n${rawCode}\n$`;
-  }
-  return "#set page(margin: 3pt, background: none, width: auto, fill: none, height: auto)"
-    + `\n#set text(size: ${fontSize}pt)\n${code}`;
-}
+import { BRIDGE_CONFIG } from "./constants.js";
 
 export interface CompilationResult {
   svg: string | null;
@@ -103,11 +6,7 @@ export interface CompilationResult {
 }
 
 /**
- * Diagnostic message structure returned by the Typst compiler.
- *
- * See https://github.com/Myriad-Dreamin/typst.ts/blob/3fe6e3caefaab9947689f162c8ea8b193944eef3/packages/typst.ts/src/compiler.mts#L24-L43
- * Unfortunately the interface is not exported directly from the package,
- * so we redefine it here.
+ * 本地桥接服务返回的诊断结构。
  */
 export interface DiagnosticMessage {
   package: string;
@@ -119,32 +18,140 @@ export interface DiagnosticMessage {
 
 export type Diagnostics = (string | DiagnosticMessage)[] | undefined;
 
+type BridgeHealth = {
+  ok: boolean;
+  available: boolean;
+  message: string;
+};
+
+type CompileResponse = {
+  ok: boolean;
+  svg: string | null;
+  diagnostics: Diagnostics;
+};
+
+let lastHealth: BridgeHealth = {
+  ok: false,
+  available: false,
+  message: "尚未连接本地 Typst 服务。",
+};
+
 /**
- * Compiles the given Typst source to SVG.
+ * 统一发起带超时的本地桥接请求。
+ */
+async function requestBridge(path: string, init?: RequestInit): Promise<Response> {
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => {
+    controller.abort();
+  }, BRIDGE_CONFIG.REQUEST_TIMEOUT_MS);
+
+  try {
+    return await fetch(`${BRIDGE_CONFIG.BASE_URL}${path}`, {
+      ...init,
+      signal: controller.signal,
+    });
+  } finally {
+    window.clearTimeout(timer);
+  }
+}
+
+/**
+ * 初始化本地 Typst 编译环境。
+ */
+export async function initTypst(): Promise<BridgeHealth> {
+  try {
+    const response = await requestBridge("/health", {
+      method: "GET",
+    });
+
+    if (!response.ok) {
+      lastHealth = {
+        ok: false,
+        available: false,
+        message: "本地 Typst 服务响应异常，请先运行 npm run bridge。",
+      };
+      return lastHealth;
+    }
+
+    const health = await response.json() as BridgeHealth;
+    lastHealth = health;
+    return lastHealth;
+  } catch (error) {
+    lastHealth = {
+      ok: false,
+      available: false,
+      message: error instanceof Error
+        ? `无法连接本地 Typst 服务：${error.message}`
+        : "无法连接本地 Typst 服务，请先运行 npm run bridge。",
+    };
+    return lastHealth;
+  }
+}
+
+/**
+ * 读取最近一次健康检查结果。
+ */
+export function getTypstHealth() {
+  return lastHealth;
+}
+
+/**
+ * 通过本地 Typst CLI 编译输入内容。
  */
 export async function typst(source: string, fontSize: string, mathMode: boolean): Promise<CompilationResult> {
-  const mainFilePath = "/main.typ";
-  const typstCode = buildRawTypstString(source, fontSize, mathMode);
-  compiler.addSource(mainFilePath, typstCode);
-  const response = await compiler.compile({ mainFilePath });
-  const diagnostics: Diagnostics = response.diagnostics;
+  try {
+    const response = await requestBridge("/compile", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        source,
+        fontSize,
+        mathMode,
+      }),
+    });
 
-  if (diagnostics && diagnostics.length > 0) {
-    console.warn("Typst compilation diagnostics:", diagnostics);
-    return { svg: null, diagnostics };
+    const result = await response.json() as CompileResponse;
+
+    if (!response.ok || !result.ok) {
+      lastHealth = {
+        ok: false,
+        available: false,
+        message: "本地 Typst 编译失败。",
+      };
+      return {
+        svg: null,
+        diagnostics: result.diagnostics && result.diagnostics.length > 0
+          ? result.diagnostics
+          : ["本地 Typst 编译失败。"],
+      };
+    }
+
+    lastHealth = {
+      ok: true,
+      available: true,
+      message: "本地 Typst 已连接。",
+    };
+
+    return {
+      svg: result.svg,
+      diagnostics: result.diagnostics,
+    };
+  } catch (error) {
+    lastHealth = {
+      ok: false,
+      available: false,
+      message: "本地 Typst 服务不可用。",
+    };
+
+    return {
+      svg: null,
+      diagnostics: [
+        error instanceof Error
+          ? `无法连接本地 Typst 服务：${error.message}`
+          : "无法连接本地 Typst 服务，请先运行 npm run bridge。",
+      ],
+    };
   }
-
-  const artifactContent = response["result"] as Uint8Array<ArrayBuffer>;
-  const svg = await renderer.renderSvg({
-    format: "vector",
-    artifactContent: artifactContent,
-    data_selection: {
-      body: true,
-      defs: true,
-      css: true,
-      js: false,
-    },
-  });
-
-  return { svg, diagnostics };
 }

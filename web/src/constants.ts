@@ -1,9 +1,9 @@
 /**
- * Application-wide constants
+ * 应用级常量。
  */
 
 /**
- * PowerPoint shape configuration.
+ * PowerPoint 图形配置。
  */
 export const SHAPE_CONFIG = {
   NAME: "Typst Shape",
@@ -15,14 +15,15 @@ export const SHAPE_CONFIG = {
 } as const;
 
 /**
- * Special values for fill color.
+ * 填充色的特殊值。
  */
 export const FILL_COLOR_DISABLED = "disabled";
 
 /**
- * DOM element IDs used in the UI.
+ * 界面里会用到的 DOM ID。
  */
 export const DOM_IDS = {
+  STATUS_BAR: "statusBar",
   STATUS: "status",
   FONT_SIZE: "fontSize",
   FILL_COLOR_ENABLED: "fillColorEnabled",
@@ -31,6 +32,8 @@ export const DOM_IDS = {
   MATH_MODE_ENABLED: "mathModeEnabled",
   INPUT_WRAPPER: "inputWrapper",
   TYPST_INPUT: "typstInput",
+  EDITOR_HELP_TEXT: "editorHelpText",
+  EDITOR_ASSIST_STATUS: "editorAssistStatus",
   INSERT_BTN: "insertBtn",
   BULK_UPDATE_BTN: "bulkUpdateBtn",
   PREVIEW_CONTENT: "previewContent",
@@ -46,10 +49,16 @@ export const DOM_IDS = {
   ABOUT_LINK: "aboutLink",
   ABOUT_MODAL: "aboutModal",
   ABOUT_MODAL_CLOSE: "aboutModalClose",
+  WORKSPACE_MODE_VALUE: "workspaceModeValue",
+  WORKSPACE_MODE_HINT: "workspaceModeHint",
+  TYPST_SERVICE_STATUS: "typstServiceStatus",
+  ASSIST_SERVICE_STATUS: "assistServiceStatus",
+  PREVIEW_STATE_STATUS: "previewStateStatus",
+  PREVIEW_META: "previewMeta",
 } as const;
 
 /**
- * LocalStorage keys.
+ * 本地存储键名。
  */
 export const STORAGE_KEYS = {
   FONT_SIZE: "typstFontSize",
@@ -60,7 +69,16 @@ export const STORAGE_KEYS = {
 } as const;
 
 /**
- * SVG processing constants.
+ * 本地 Typst 桥接服务配置。
+ */
+export const BRIDGE_CONFIG = {
+  BASE_URL: "http://127.0.0.1:23627",
+  REQUEST_TIMEOUT_MS: 15000,
+  PREVIEW_DEBOUNCE_MS: 180,
+} as const;
+
+/**
+ * SVG 处理常量。
  */
 export const SVG_CONFIG = {
   PADDING_RATIO: 0.04,
@@ -69,7 +87,7 @@ export const SVG_CONFIG = {
 } as const;
 
 /**
- * Theme values.
+ * 主题值。
  */
 export const THEMES = {
   DARK: "dark",
@@ -77,7 +95,7 @@ export const THEMES = {
 } as const;
 
 /**
- * Preview configuration.
+ * 预览区配置。
  */
 export const PREVIEW_CONFIG = {
   MAX_HEIGHT: "320px",
@@ -86,17 +104,18 @@ export const PREVIEW_CONFIG = {
 } as const;
 
 /**
- * Button text.
+ * 按钮文案。
  */
 export const BUTTON_TEXT = {
-  INSERT: "Insert <kbd>Ctrl+Enter</kbd>",
-  UPDATE: "Update <kbd>Ctrl+Enter</kbd>",
-  GENERATE_FROM_FILE: "Generate from file",
-  UPDATE_FROM_FILE: "Update from file",
+  INSERT: "插入图形",
+  UPDATE: "更新图形",
+  INSERT_SHORTCUT: "Ctrl+Enter",
+  GENERATE_FROM_FILE: "从文件生成",
+  UPDATE_FROM_FILE: "从文件更新",
 } as const;
 
 /**
- * Default values.
+ * 默认值。
  */
 export const DEFAULTS = {
   FONT_SIZE: "28",

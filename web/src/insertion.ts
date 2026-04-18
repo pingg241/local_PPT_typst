@@ -1,88 +1,21 @@
-import { debug } from "./utils/logger.js";
-import { applyFillColor, normalizeAlphaHexColors, parseAndApplySize } from "./svg.js";
-import { typst } from "./typst.js";
-import { setStatus, getFontSize, getFillColor, getMathModeEnabled, getTypstCode } from "./ui.js";
-import { isTypstPayload, createTypstPayload, extractTypstCode } from "./payload.js";
+import { FILL_COLOR_DISABLED, SHAPE_CONFIG, STORAGE_KEYS } from "./constants.js";
+import { extractTypstCode, isTypstPayload } from "./payload.js";
+import { readShapeTag } from "./shape.js";
 import { storeValue } from "./utils/storage.js";
-import { lastTypstShapeId, TypstShapeInfo, writeShapeProperties, readShapeTag } from "./shape.js";
-import { STORAGE_KEYS, SHAPE_CONFIG, FILL_COLOR_DISABLED } from "./constants.js";
-
-type PreparedSvgResult = {
-  svg: string;
-  size: { width: number; height: number };
-  payload: string;
-};
-
-type SlideSize = {
-  width: number;
-  height: number;
-};
+import { debug } from "./utils/logger.js";
+import { getFillColor, getFontSize, getMathModeEnabled, getTypstCode, setStatus } from "./ui.js";
+import { buildCompileFailureStatus, prepareTypstSvg } from "./insertion/compile.js";
+import {
+  calcShapeTopLeftToBeCentered,
+  calculateCenteredPosition,
+  clampPositionWithinSlide,
+  fitSizeWithinSlide,
+} from "./insertion/geometry.js";
+import { findTypstShape, insertSvgAndTag } from "./insertion/shape-ops.js";
+import type { SlideSize } from "./insertion/types.js";
 
 /**
- * Compiles Typst code to SVG and prepares it for insertion.
- */
-async function prepareTypstSvg(
-  typstCode: string,
-  fontSize: string,
-  fillColor: string | null,
-  mathMode: boolean,
-): Promise<PreparedSvgResult | null> {
-  const result = await typst(typstCode, fontSize, mathMode);
-  if (!result.svg) {
-    // diagnostics are only shown for preview, not insertion
-    return null;
-  }
-
-  const { svgElement, size } = parseAndApplySize(result.svg);
-  if (fillColor) {
-    applyFillColor(svgElement, fillColor);
-  }
-  normalizeAlphaHexColors(svgElement);
-
-  const serializer = new XMLSerializer();
-  const svg = serializer.serializeToString(svgElement);
-  const payload = createTypstPayload(typstCode);
-
-  return { svg, size, payload };
-}
-
-/**
- * Inserts SVG into PowerPoint and tags it with Typst metadata.
- *
- * @returns the newly inserted shape or null if insertion fails.
- */
-async function insertSvgAndTag(
-  svg: string,
-  info: TypstShapeInfo,
-  targetSlideId: string,
-  existingShapeIds: Set<string>,
-): Promise<PowerPoint.Shape | null> {
-  return new Promise<PowerPoint.Shape | null>((resolve) => {
-    Office.context.document.setSelectedDataAsync(svg, { coercionType: Office.CoercionType.XmlSvg }, (result) => {
-      if (result.status !== Office.AsyncResultStatus.Succeeded) {
-        console.error("Insert failed:", result.error);
-        resolve(null);
-        return;
-      }
-
-      void PowerPoint.run(async (context) => {
-        const shapeToTag = await findInsertedShape(targetSlideId, existingShapeIds, context);
-
-        if (!shapeToTag) {
-          console.warn("No shape found after insertion; cannot tag Typst payload.");
-          resolve(null);
-          return;
-        }
-
-        await writeShapeProperties(shapeToTag, info, context);
-        resolve(shapeToTag);
-      });
-    });
-  });
-}
-
-/**
- * Inserts or updates a Typst formula in PowerPoint.
+ * 把当前输入内容插入到 PowerPoint，或更新当前选中的单个 Typst 对象。
  */
 export async function insertOrUpdateFormula() {
   const rawCode = getTypstCode();
@@ -94,7 +27,7 @@ export async function insertOrUpdateFormula() {
 
   const prepared = await prepareTypstSvg(rawCode, fontSize, fillColor, mathMode);
   if (!prepared) {
-    setStatus("Typst compile failed.", true);
+    setStatus(buildCompileFailureStatus(), true);
     return;
   }
 
@@ -106,42 +39,64 @@ export async function insertOrUpdateFormula() {
       const pageSetup = context.presentation.pageSetup;
 
       selection.load("items");
-      selectedSlides.load("items");
-      allSlides.load("items");
+      selectedSlides.load("items/id");
+      allSlides.load("items/id");
       pageSetup.load(["slideWidth", "slideHeight"]);
       await context.sync();
+
+      if (selection.items.length > 0) {
+        selection.items.forEach((shape) => {
+          shape.load(["id", "altTextDescription"]);
+        });
+        await context.sync();
+      }
+
+      const selectedTypstShapes = selection.items.filter(shape =>
+        isTypstPayload(shape.altTextDescription),
+      );
+      if (selectedTypstShapes.length > 1) {
+        setStatus("当前选中了多个 Typst 对象，请改用“批量改字号”，或只保留一个对象后再更新。", true);
+        return;
+      }
 
       const slideSize: SlideSize = {
         width: pageSetup.slideWidth,
         height: pageSetup.slideHeight,
       };
-
       const fittedSize = fitSizeWithinSlide(prepared.size, slideSize);
 
-      const targetSlide: PowerPoint.Slide | undefined = selectedSlides.items[0] || allSlides.items[0];
-      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-      if (!targetSlide || targetSlide.isNullObject) {
-        setStatus("No slide available to insert SVG.", true);
+      const locatedTypstShape = await findTypstShape(
+        selection.items,
+        selectedSlides.items.map(slide => slide.id),
+        allSlides.items,
+        context,
+      );
+
+      const hasSelectedSlides = selectedSlides.items.length > 0;
+      const hasAnySlides = allSlides.items.length > 0;
+      if (!locatedTypstShape && !hasSelectedSlides && !hasAnySlides) {
+        setStatus("没有可用的幻灯片用于插入内容。", true);
         return;
+      }
+
+      const fallbackSlide = hasSelectedSlides ? selectedSlides.items[0] : allSlides.items[0];
+      const targetSlide = locatedTypstShape?.slide || fallbackSlide;
+
+      if (locatedTypstShape) {
+        locatedTypstShape.shape.load(["left", "top", "width", "height", "rotation"]);
       }
       targetSlide.load(["id", "shapes/items/id"]);
       await context.sync();
 
-      let position: { left: number; top: number } | undefined;
-      let rotation: number | undefined;
-      let isReplacing = false;
-
-      const typstShape = await findTypstShape(selection.items, allSlides.items, context);
-      if (typstShape) {
-        position = calculateCenteredPosition(typstShape, fittedSize);
-        position = clampPositionWithinSlide(position, fittedSize, slideSize);
-        rotation = typstShape.rotation;
-        typstShape.delete();
-        isReplacing = true;
-        await context.sync();
-      } else {
-        position = calcShapeTopLeftToBeCentered(fittedSize, slideSize);
-      }
+      const replacingShape = locatedTypstShape?.shape;
+      const position = replacingShape
+        ? clampPositionWithinSlide(
+            calculateCenteredPosition(replacingShape, fittedSize),
+            fittedSize,
+            slideSize,
+          )
+        : calcShapeTopLeftToBeCentered(fittedSize, slideSize);
+      const rotation = replacingShape?.rotation;
 
       const existingShapeIds = new Set(targetSlide.shapes.items.map(shape => shape.id));
       const insertedShape = await insertSvgAndTag(prepared.svg, {
@@ -155,82 +110,27 @@ export async function insertOrUpdateFormula() {
       }, targetSlide.id, existingShapeIds);
 
       if (!insertedShape) {
-        setStatus("Failed to insert SVG into the slide.", true);
+        setStatus("插入 SVG 失败，旧内容已保留。", true);
         return;
       }
 
-      setStatus(isReplacing ? "Updated Typst SVG." : "Inserted Typst SVG.");
+      if (replacingShape) {
+        replacingShape.delete();
+        await context.sync();
+        setStatus("已更新 Typst 图形。");
+        return;
+      }
+
+      setStatus("已插入 Typst 图形。");
     });
   } catch (error) {
     console.error("PowerPoint context error:", error);
-    setStatus("PowerPoint API error. See console.", true);
+    setStatus("PowerPoint API 调用失败，请查看控制台。", true);
   }
 }
 
 /**
- * Finds a Typst shape in the current selection or uses cached selection.
- */
-async function findTypstShape(selectedShapes: PowerPoint.Shape[], allSlides: PowerPoint.Slide[],
-  context: PowerPoint.RequestContext): Promise<PowerPoint.Shape | undefined> {
-  const typstShape = selectedShapes.find(
-    shape => isTypstPayload(shape.altTextDescription),
-  );
-  if (typstShape) return typstShape;
-
-  if (!lastTypstShapeId) return undefined;
-  const id = lastTypstShapeId;
-
-  try {
-    const targetSlide = allSlides.find(slide => slide.id === id.slideId) || allSlides[0];
-    if (targetSlide.isNullObject) return undefined;
-
-    targetSlide.shapes.load("items");
-    await context.sync();
-    if (targetSlide.shapes.items.length === 0) return undefined;
-
-    return targetSlide.shapes.items.find(shape => shape.id === id.shapeId);
-  } catch (error) {
-    debug("Fallback to last selection failed:", error);
-    return undefined;
-  }
-}
-
-/**
- * Finds the newly inserted shape on a slide.
- *
- * @param slideId Target slide ID
- * @param existingShapeIds IDs of shapes before insertion
- * @param context PowerPoint context
- * @returns The new shape or null
- */
-async function findInsertedShape(slideId: string, existingShapeIds: Set<string>,
-  context: PowerPoint.RequestContext): Promise<PowerPoint.Shape | null> {
-  try {
-    const slide = context.presentation.slides.getItem(slideId);
-    slide.shapes.load("items/id");
-    await context.sync();
-
-    const newShapes = slide.shapes.items.filter(shape => !existingShapeIds.has(shape.id));
-    if (newShapes.length > 0) {
-      return newShapes[newShapes.length - 1];
-    }
-
-    if (slide.shapes.items.length > 0) {
-      return slide.shapes.items[slide.shapes.items.length - 1];
-    }
-  } catch (error) {
-    debug("Shape diff fallback failed", error);
-  }
-
-  const postShapes = context.presentation.getSelectedShapes();
-  postShapes.load("items");
-  await context.sync();
-
-  return postShapes.items.length > 0 ? postShapes.items[postShapes.items.length - 1] : null;
-}
-
-/**
- * Updates font size for all selected Typst shapes.
+ * 批量更新当前选中 Typst 对象的字号。
  */
 export async function bulkUpdateFontSize() {
   const newFontSize = getFontSize();
@@ -242,18 +142,25 @@ export async function bulkUpdateFontSize() {
       selection.load("items");
       await context.sync();
 
+      if (selection.items.length > 0) {
+        selection.items.forEach((shape) => {
+          shape.load(["id", "altTextDescription", "left", "top", "width", "height", "rotation"]);
+        });
+        await context.sync();
+      }
+
       const typstShapes = selection.items.filter(shape =>
         isTypstPayload(shape.altTextDescription),
       );
-
       if (typstShapes.length === 0) {
-        setStatus("No Typst shapes selected.", true);
+        setStatus("当前没有选中 Typst 对象。", true);
         return;
       }
 
       const pageSetup = context.presentation.pageSetup;
       pageSetup.load(["slideWidth", "slideHeight"]);
       await context.sync();
+
       const slideSize: SlideSize = {
         width: pageSetup.slideWidth,
         height: pageSetup.slideHeight,
@@ -265,12 +172,12 @@ export async function bulkUpdateFontSize() {
         try {
           const typstCode = extractTypstCode(shape.altTextDescription);
           const storedFillColor = await readShapeTag(shape, SHAPE_CONFIG.TAGS.FILL_COLOR, context);
-
+          const storedMathMode = await readShapeTag(shape, SHAPE_CONFIG.TAGS.MATH_MODE, context);
           const fillColor = !storedFillColor || storedFillColor === FILL_COLOR_DISABLED
             ? null
             : storedFillColor;
+          const mathMode = storedMathMode === "true";
 
-          const mathMode = getMathModeEnabled();
           const prepared = await prepareTypstSvg(typstCode, newFontSize, fillColor, mathMode);
           if (!prepared) {
             debug(`Typst compile failed for shape ${shape.id}`);
@@ -278,25 +185,18 @@ export async function bulkUpdateFontSize() {
           }
 
           const fittedSize = fitSizeWithinSlide(prepared.size, slideSize);
-          let position = calculateCenteredPosition(shape, fittedSize);
-          position = clampPositionWithinSlide(
-            position,
+          const position = clampPositionWithinSlide(
+            calculateCenteredPosition(shape, fittedSize),
             fittedSize,
             slideSize,
           );
-          const rotation = shape.rotation;
 
-          // Capture slide and existing shapes before deletion
           const parentSlide = shape.getParentSlide();
           parentSlide.load("id");
           parentSlide.shapes.load("items/id");
           await context.sync();
-          const existingShapeIds = new Set(parentSlide.shapes.items.map((s: PowerPoint.Shape) => s.id));
-          const slideId = parentSlide.id;
 
-          shape.delete();
-          await context.sync();
-
+          const existingShapeIds = new Set(parentSlide.shapes.items.map((item: PowerPoint.Shape) => item.id));
           const insertedShape = await insertSvgAndTag(prepared.svg, {
             payload: prepared.payload,
             fontSize: newFontSize,
@@ -304,94 +204,25 @@ export async function bulkUpdateFontSize() {
             mathMode,
             position,
             size: fittedSize,
-            rotation,
-          }, slideId, existingShapeIds);
+            rotation: shape.rotation,
+          }, parentSlide.id, existingShapeIds);
 
-          if (insertedShape) {
-            successCount++;
+          if (!insertedShape) {
+            continue;
           }
+
+          shape.delete();
+          await context.sync();
+          successCount++;
         } catch (error) {
           debug(`Error updating shape ${shape.id}:`, error);
         }
       }
 
-      setStatus(`Updated ${successCount.toString()} of ${typstShapes.length.toString()} Typst shapes with font size ${newFontSize}.`);
+      setStatus(`已更新 ${successCount.toString()} / ${typstShapes.length.toString()} 个 Typst 对象的字号。`);
     });
   } catch (error) {
     console.error("Bulk update error:", error);
-    setStatus("Error updating Typst shapes. See console.", true);
+    setStatus("批量更新失败，请查看控制台。", true);
   }
-}
-
-/**
- * Calculates the position to center a new shape on an old shape's center point.
- */
-function calculateCenteredPosition(
-  oldShape: { left: number; top: number; width: number; height: number },
-  newSize: { width: number; height: number },
-): { left: number; top: number } {
-  const centerX = oldShape.left + oldShape.width / 2;
-  const centerY = oldShape.top + oldShape.height / 2;
-  return {
-    left: centerX - newSize.width / 2,
-    top: centerY - newSize.height / 2,
-  };
-}
-
-/**
- * Scales a shape to fit the slide while preserving aspect ratio.
- *
- * The scale factor is computed as:
- * s = min(slideWidth / shapeWidth, slideHeight / shapeHeight, 1)
- */
-function fitSizeWithinSlide(
-  shapeSize: { width: number; height: number },
-  slideSize: SlideSize,
-): { width: number; height: number } {
-  if (shapeSize.width <= 0 || shapeSize.height <= 0) {
-    return shapeSize;
-  }
-
-  const widthScale = slideSize.width / shapeSize.width;
-  const heightScale = slideSize.height / shapeSize.height;
-  const scale = Math.min(widthScale, heightScale, 1);
-
-  return {
-    width: shapeSize.width * scale,
-    height: shapeSize.height * scale,
-  };
-}
-
-/**
- * Clamps a position so the full shape remains inside the slide.
- *
- * The placement is clamped to:
- * - left: [0, slideWidth - shapeWidth]
- * - top: [0, slideHeight - shapeHeight]
- */
-function clampPositionWithinSlide(
-  position: { left: number; top: number },
-  shapeSize: { width: number; height: number },
-  slideSize: SlideSize,
-): { left: number; top: number } {
-  const maxLeft = Math.max(0, slideSize.width - shapeSize.width);
-  const maxTop = Math.max(0, slideSize.height - shapeSize.height);
-
-  return {
-    left: Math.min(Math.max(0, position.left), maxLeft),
-    top: Math.min(Math.max(0, position.top), maxTop),
-  };
-}
-
-/**
- * Calculates the top-left position for a shape to be centered on the slide.
- */
-function calcShapeTopLeftToBeCentered(
-  shapeSize: { width: number; height: number },
-  slideSize: SlideSize,
-) {
-  const centerX = (slideSize.width - shapeSize.width) / 2;
-  const centerY = (slideSize.height - shapeSize.height) / 2;
-
-  return clampPositionWithinSlide({ left: centerX, top: centerY }, shapeSize, slideSize);
 }

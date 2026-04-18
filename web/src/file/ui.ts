@@ -1,5 +1,5 @@
 /**
- * UI update functions for file handling.
+ * 文件导入相关的界面更新逻辑。
  */
 
 import { DOM_IDS } from "../constants.js";
@@ -7,16 +7,17 @@ import { getButtonElement, getHTMLElement } from "../utils/dom.js";
 import { setStatus, setFileButtonText } from "../ui.js";
 
 /**
- * Updates the UI with the selected file information.
+ * 把已选文件信息同步到界面。
  *
- * @param file The file to display
- * @param isEditingExistingFormula Whether a formula is currently selected
+ * @param file 当前文件
+ * @param isEditingExistingFormula 当前是否处于更新已有公式的状态
  */
 export function updateFileUI(file: File, isEditingExistingFormula: boolean): void {
   const generateBtn = getButtonElement(DOM_IDS.GENERATE_FROM_FILE_BTN);
-  generateBtn.style.display = "block";
+  generateBtn.hidden = false;
 
   const fileInfo = getHTMLElement(DOM_IDS.FILE_INFO);
+  fileInfo.hidden = false;
   fileInfo.classList.add("show");
 
   const fileName = getHTMLElement(DOM_IDS.FILE_NAME);
@@ -29,19 +30,20 @@ export function updateFileUI(file: File, isEditingExistingFormula: boolean): voi
 }
 
 /**
- * Shows the file picker error state when no file is selected.
+ * 在未选择文件时显示错误态。
  */
 export function showFilePickerError(): void {
   const dropzoneLabel = getHTMLElement(DOM_IDS.DROPZONE_LABEL);
   dropzoneLabel.style.borderColor = "var(--error-color)";
-  setStatus("Please select a file first", true);
+  setStatus("请先选择一个文件。", true);
 }
 
 /**
- * Hides the file UI and clears file information.
+ * 隐藏文件信息区域。
  */
 export function hideFileUI(): void {
-  getButtonElement(DOM_IDS.GENERATE_FROM_FILE_BTN).style.display = "none";
+  getButtonElement(DOM_IDS.GENERATE_FROM_FILE_BTN).hidden = true;
   const fileInfo = getHTMLElement(DOM_IDS.FILE_INFO);
+  fileInfo.hidden = true;
   fileInfo.classList.remove("show");
 }

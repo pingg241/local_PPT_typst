@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="zh-CN">
 
   <head>
     <meta charset="UTF-8">
@@ -12,166 +12,218 @@
   </head>
 
   <body>
-    <div class="controls">
-      <div class="control-group">
-        <label for="fontSize" title="Font size in points (pt)">Size</label>
-        <input id="fontSize" type="number" min="1" step="1.0" value="28">
-      </div>
-      <div class="control-group checkbox-group fill-color-group">
-        <label title="Shape fill color">
-          <input id="fillColorEnabled" type="checkbox" checked>
-          <span>Fill</span>
-        </label>
-        <!-- eslint-disable-next-line @html-eslint/use-baseline -->
-        <input id="fillColor" type="color" value="#000000">
-      </div>
-      <div class="control-group checkbox-group">
-        <label title="Use Typst document colors in preview instead of overriding them">
-          <input id="previewFillEnabled" type="checkbox">
-          <span>Preview Typst Fill</span>
-        </label>
-      </div>
-      <div class="control-group checkbox-group">
-        <label title="Automatically wrap your input in display math delimiters ($)">
-          <input id="mathModeEnabled" type="checkbox" checked>
-          <span>Only Math</span>
-        </label>
-      </div>
-    </div>
-    <div id="inputWrapper">
-      <div id="mathDelimiterTop" class="math-delimiter">$</div>
-      <textarea id="typstInput" placeholder="Enter Typst code, e.g. a^2 + b^2 = c^2"></textarea>
-      <div id="mathDelimiterBottom" class="math-delimiter">$</div>
-    </div>
+    <main class="app-shell">
+      <header class="topbar">
+        <div class="topbar-copy">
+          <h1>PPTypst</h1>
+        </div>
+        <div class="topbar-actions">
+          <button id="themeToggleBtn" class="icon-btn" aria-label="切换主题" title="切换明暗主题">
+            <svg class="icon-sun" height="18" viewBox="0 0 24 24" width="18">
+              <circle cx="12" cy="12" fill="currentColor" r="5" />
+              <line
+                stroke="currentColor"
+                stroke-width="2"
+                x1="12"
+                x2="12"
+                y1="1"
+                y2="3"
+              />
+              <line
+                stroke="currentColor"
+                stroke-width="2"
+                x1="12"
+                x2="12"
+                y1="21"
+                y2="23"
+              />
+              <line
+                stroke="currentColor"
+                stroke-width="2"
+                x1="4.22"
+                x2="5.64"
+                y1="4.22"
+                y2="5.64"
+              />
+              <line
+                stroke="currentColor"
+                stroke-width="2"
+                x1="18.36"
+                x2="19.78"
+                y1="18.36"
+                y2="19.78"
+              />
+              <line
+                stroke="currentColor"
+                stroke-width="2"
+                x1="1"
+                x2="3"
+                y1="12"
+                y2="12"
+              />
+              <line
+                stroke="currentColor"
+                stroke-width="2"
+                x1="21"
+                x2="23"
+                y1="12"
+                y2="12"
+              />
+              <line
+                stroke="currentColor"
+                stroke-width="2"
+                x1="4.22"
+                x2="5.64"
+                y1="19.78"
+                y2="18.36"
+              />
+              <line
+                stroke="currentColor"
+                stroke-width="2"
+                x1="18.36"
+                x2="19.78"
+                y1="5.64"
+                y2="4.22"
+              />
+            </svg>
+            <svg class="icon-moon" height="18" viewBox="0 0 24 24" width="18">
+              <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" fill="currentColor" />
+            </svg>
+          </button>
+          <a id="aboutLink" class="about-link" href="#" title="关于">关于</a>
+        </div>
+      </header>
 
-    <div id="previewContainer">
-      <span id="previewLabel">Preview</span>
-      <div id="previewContent"></div>
-    </div>
+      <section class="panel workspace-panel" aria-label="当前状态">
+        <div class="workspace-main">
+          <div class="workspace-copy">
+            <strong id="workspaceModeValue">新建模式</strong>
+            <p id="workspaceModeHint" hidden>未选中 Typst 对象，插入会创建新的图形。</p>
+          </div>
+          <div class="workspace-status">
+            <span id="typstServiceStatus" class="service-chip" data-tone="neutral">Typst 待检测</span>
+            <span id="assistServiceStatus" class="service-chip" data-tone="neutral">补全初始化中</span>
+            <span id="previewStateStatus" class="service-chip" data-tone="neutral">预览待输入</span>
+          </div>
+        </div>
+      </section>
 
-    <div id="diagnosticsContainer" style="display: none;">
-      <span id="diagnosticsLabel">Diagnostics</span>
-      <div id="diagnosticsContent"></div>
-    </div>
-
-    <button id="insertBtn" disabled></button>
-    <button id="bulkUpdateBtn" style="display: none;">Update font size</button>
-
-    <div class="file-dropzone">
-      <div class="dropzone-container">
-        <label id="dropzoneLabel" class="dropzone-label"
-          alt="Select a Typst file to generate an equation from it">
-          <div class="dropzone-icon">📁</div>
-          <div class="dropzone-text">Drop a Typst file here</div>
-          <div class="dropzone-subtext">or click to browse</div>
-          <input id="fileInput" type="file" class="dropzone-input" accept=".typ,.txt">
-        </label>
-
-        <div id="fileInfo" class="file-info">
-          <div class="file-icon">📄</div>
-          <div id="fileName"></div>
+      <section class="panel editor-panel">
+        <div class="panel-header">
+          <div>
+            <h2>Typst 输入</h2>
+            <p id="editorHelpText" hidden>输入 Typst 公式，例如 a^2 + b^2 = c^2</p>
+          </div>
+          <div id="editorAssistStatus" class="inline-assist-status">智能补全：初始化中...</div>
         </div>
 
-        <button id="generateFromFileBtn" style="display: none;"></button>
-      </div>
-    </div>
+        <div class="controls-bar">
+          <label class="control-field control-number" for="fontSize" title="字号，单位为点（pt）">
+            <span>字号</span>
+            <input id="fontSize" type="number" min="1" step="1.0" value="28">
+          </label>
 
-    <!-- Status Bar -->
-    <div id="statusBar" class="status-bar">
+          <label class="control-field control-check" title="统一设置图形颜色">
+            <input id="fillColorEnabled" type="checkbox" checked>
+            <span>统一填充</span>
+            <!-- eslint-disable-next-line @html-eslint/use-baseline -->
+            <input id="fillColor" type="color" value="#000000">
+          </label>
+
+          <label class="control-field control-check" title="预览时保留 Typst 原始颜色，不用统一预览色覆盖">
+            <input id="previewFillEnabled" type="checkbox">
+            <span>预览保留原色</span>
+          </label>
+
+          <label class="control-field control-check" title="自动把输入内容包裹在显示公式分隔符 $...$ 中">
+            <input id="mathModeEnabled" type="checkbox" checked>
+            <span>仅公式</span>
+          </label>
+        </div>
+
+        <div id="inputWrapper">
+          <div id="mathDelimiterTop" class="math-delimiter">$</div>
+          <div id="typstInput"></div>
+          <div id="mathDelimiterBottom" class="math-delimiter">$</div>
+        </div>
+      </section>
+
+      <div class="action-grid">
+        <button id="insertBtn" class="primary-btn" disabled></button>
+        <button id="bulkUpdateBtn" class="secondary-btn" hidden>批量改字号</button>
+      </div>
+
+      <section class="panel preview-panel">
+        <div class="panel-header">
+          <div>
+            <h2>编译结果</h2>
+            <p id="previewMeta" hidden>输入 Typst 内容后会自动调用本地 Typst 进行编译，并在这里显示结果。</p>
+          </div>
+        </div>
+
+        <div id="previewContainer">
+          <span id="previewLabel">当前输出</span>
+          <div id="previewContent">
+            <div class="preview-placeholder">
+              <strong>等待输入</strong>
+              <span>写入 Typst 内容后，这里会自动出现本地编译预览。</span>
+            </div>
+          </div>
+        </div>
+
+        <div id="diagnosticsContainer" hidden>
+          <span id="diagnosticsLabel">诊断信息</span>
+          <div id="diagnosticsContent"></div>
+        </div>
+      </section>
+
+      <section class="panel import-panel">
+        <div class="panel-header">
+          <div>
+            <h2>从文件生成</h2>
+          </div>
+        </div>
+
+        <div class="file-dropzone">
+          <div class="dropzone-container">
+            <label id="dropzoneLabel" class="dropzone-label" title="选择一个 Typst 文件并据此生成内容">
+              <div class="dropzone-icon">T</div>
+              <div class="dropzone-text">拖入 .typ 文件或点击选择</div>
+              <div class="dropzone-subtext">载入后可直接生成，选中已有对象时也可以原位更新。</div>
+              <input id="fileInput" type="file" class="dropzone-input" accept=".typ,.txt">
+            </label>
+
+            <div id="fileInfo" class="file-info" hidden>
+              <div class="file-icon">T</div>
+              <div id="fileName"></div>
+            </div>
+
+            <button id="generateFromFileBtn" class="secondary-btn" hidden></button>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <div id="statusBar" class="status-bar" data-tone="neutral">
       <div id="status" class="status-text"></div>
-      <div class="status-bar-controls">
-        <button id="themeToggleBtn" class="icon-btn" aria-label="Toggle theme" title="Toggle dark/light mode">
-          <svg class="icon-sun" height="18" viewBox="0 0 24 24" width="18">
-            <circle cx="12" cy="12" fill="currentColor" r="5" />
-            <line
-              stroke="currentColor"
-              stroke-width="2"
-              x1="12"
-              x2="12"
-              y1="1"
-              y2="3"
-            />
-            <line
-              stroke="currentColor"
-              stroke-width="2"
-              x1="12"
-              x2="12"
-              y1="21"
-              y2="23"
-            />
-            <line
-              stroke="currentColor"
-              stroke-width="2"
-              x1="4.22"
-              x2="5.64"
-              y1="4.22"
-              y2="5.64"
-            />
-            <line
-              stroke="currentColor"
-              stroke-width="2"
-              x1="18.36"
-              x2="19.78"
-              y1="18.36"
-              y2="19.78"
-            />
-            <line
-              stroke="currentColor"
-              stroke-width="2"
-              x1="1"
-              x2="3"
-              y1="12"
-              y2="12"
-            />
-            <line
-              stroke="currentColor"
-              stroke-width="2"
-              x1="21"
-              x2="23"
-              y1="12"
-              y2="12"
-            />
-            <line
-              stroke="currentColor"
-              stroke-width="2"
-              x1="4.22"
-              x2="5.64"
-              y1="19.78"
-              y2="18.36"
-            />
-            <line
-              stroke="currentColor"
-              stroke-width="2"
-              x1="18.36"
-              x2="19.78"
-              y1="5.64"
-              y2="4.22"
-            />
-          </svg>
-          <svg class="icon-moon" height="18" viewBox="0 0 24 24" width="18">
-            <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" fill="currentColor" />
-          </svg>
-        </button>
-        <a id="aboutLink" class="about-link" href="#" title="About">About</a>
-      </div>
     </div>
 
-    <!-- About Modal -->
+    <!-- 关于弹窗 -->
     <div id="aboutModal" class="modal">
       <div class="modal-content">
-        <button id="aboutModalClose" class="modal-close" aria-label="Close about dialog">
+        <button id="aboutModalClose" class="modal-close" aria-label="关闭关于弹窗">
           &times;
         </button>
-        <h2>About PPTypst</h2>
+        <h2>关于 PPTypst</h2>
         <div class="modal-links">
           <a href="https://splines.github.io/pptypst/" rel="noopener noreferrer" target="_blank">
-            🌐 Visit Website
+            访问项目主页
           </a>
           <a href="https://github.com/splines/pptypst/issues" rel="noopener noreferrer" target="_blank">
-            🐛 Report a Problem
+            反馈问题
           </a>
           <a href="privacy.html" target="_blank">
-            🔒 Privacy Policy
+            隐私政策
           </a>
         </div>
       </div>

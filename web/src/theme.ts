@@ -1,6 +1,7 @@
 import { updatePreview } from "./preview.js";
 import { getButtonElement } from "./utils/dom";
 import { DOM_IDS, STORAGE_KEYS, THEMES } from "./constants.js";
+import { syncTypstEditorTheme } from "./editor.js";
 
 /**
  * Initializes dark mode based on stored preference (defaults to light mode).
@@ -28,6 +29,7 @@ function applyTheme(isDark: boolean) {
   } else {
     root.classList.remove("dark-mode");
   }
+  syncTypstEditorTheme();
 }
 
 /**

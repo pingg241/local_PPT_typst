@@ -1,5 +1,5 @@
 /**
- * Main file handling functions and public API.
+ * 文件处理主流程与对外导出方法。
  */
 
 import { insertOrUpdateFormula } from "../insertion.js";
@@ -8,14 +8,14 @@ import { getFileHandle, getSelectedFile, clearFileState } from "./state.js";
 import { showFilePickerError, hideFileUI } from "./ui.js";
 
 /**
- * Handles generating formula from the selected file.
+ * 根据当前选中的文件生成或更新图形。
  */
 export async function handleGenerateFromFile(): Promise<void> {
   const fileHandle = getFileHandle();
   const selectedFile = getSelectedFile();
 
   if (!fileHandle && !selectedFile) {
-    setStatus("Please select a file first", true);
+    setStatus("请先选择一个文件。", true);
     return;
   }
 
@@ -31,41 +31,40 @@ export async function handleGenerateFromFile(): Promise<void> {
       content = await selectedFile.text();
       fileName = selectedFile.name;
     } else {
-      console.error("No file or handle available, should never happen");
+      console.error("没有可用的文件对象或句柄，这里本不应该发生。");
       return;
     }
 
     setTypstCode(content);
-    setStatus(`Loaded content from ${fileName}`);
+    setStatus(`已载入文件内容：${fileName}`);
 
-    // Temporarily disable math mode for file generation
-    // since external files typically include their own $ delimiters
+    // 从文件生成时，通常文件内部已经自己写好了数学分隔符，
+    // 所以这里临时关闭“仅公式模式”，避免重复包裹 `$`。
     const previousMathMode = getMathModeEnabled();
     setMathModeEnabled(false);
     try {
       await insertOrUpdateFormula();
     } finally {
-      // Restore the previous math mode setting
+      // 恢复用户原本的数学模式设置。
       setMathModeEnabled(previousMathMode);
     }
   } catch (error) {
     console.error(error);
     // eslint-disable-next-line @typescript-eslint/restrict-template-expressions
-    let statusMsg = `Error reading file: ${error}`;
+    let statusMsg = `读取文件失败：${error}`;
 
     if (error instanceof DOMException) {
       if (error.name === "NotReadableError") {
         if ("showOpenFilePicker" in window) {
-          // File System API is supported but still got error - unexpected
-          statusMsg = "Cannot read the file. Please select the file again.";
+          // 浏览器支持文件系统接口，但读取仍失败，通常需要重新授权。
+          statusMsg = "无法读取该文件，请重新选择一次。";
         } else {
-          // File System API is NOT supported (e.g., macOS/Safari)
-          statusMsg = "Cannot automatically reload a file that has changed on disk. "
-            + "Please select the file again. (This is a limitation on macOS where the "
-            + "File System Access API is not supported.)";
+          // 当前环境不支持 File System Access API，例如部分 macOS WebView。
+          statusMsg = "磁盘上的文件变更后无法自动重新读取，请重新选择一次。"
+            + "（这通常是因为当前环境不支持 File System Access API。）";
         }
       } else if (error.name === "NotFoundError") {
-        statusMsg = "File couldn't be found on disk anymore. Please select your file again.";
+        statusMsg = "磁盘上已经找不到这个文件了，请重新选择。";
       }
     }
     setStatus(statusMsg, true);
@@ -76,9 +75,9 @@ export async function handleGenerateFromFile(): Promise<void> {
 }
 
 /**
- * Function to be called from the ribbon button to generate from file.
+ * 供功能区按钮调用的“从文件生成”入口。
  *
- * This is registered as a FunctionFile command in manifest.xml.
+ * 这个方法在 `manifest.xml` 里注册为 FunctionFile 命令。
  */
 export async function generateFromFile(event: Office.AddinCommands.Event): Promise<void> {
   try {
@@ -94,7 +93,7 @@ export async function generateFromFile(event: Office.AddinCommands.Event): Promi
 
     event.completed();
   } catch (error) {
-    console.error("Error in generateFromFile command:", error);
+    console.error("执行从文件生成命令时出错：", error);
     event.completed();
   }
 }

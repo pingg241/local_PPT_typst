@@ -1,5 +1,5 @@
 /**
- * File picker logic using File System Access API.
+ * 基于 File System Access API 的文件选择逻辑。
  */
 
 import "./types.js";
@@ -11,12 +11,12 @@ import { DOM_IDS } from "../constants.js";
 import { lastTypstShapeId } from "../shape.js";
 
 /**
- * Processes a selected file (from either picker or drop).
+ * 统一处理用户选中的文件，无论来源是文件选择器还是拖放。
  */
 export function processFile(file: File, handle?: FileSystemFileHandle): void {
-  // Check if it's a valid file type
+  // 仅允许导入 Typst 源文件或纯文本文件。
   if (!file.name.endsWith(".typ") && !file.name.endsWith(".txt")) {
-    setStatus("Please select a .typ or .txt file", true);
+    setStatus("请选择 `.typ` 或 `.txt` 文件。", true);
     return;
   }
 
@@ -24,13 +24,13 @@ export function processFile(file: File, handle?: FileSystemFileHandle): void {
   setSelectedFile(file);
   const isEditingExistingFormula = lastTypstShapeId !== null;
   updateFileUI(file, isEditingExistingFormula);
-  setStatus(`Selected: ${file.name}`);
+  setStatus(`已选择文件：${file.name}`);
 }
 
 /**
- * Opens the file picker using File System Access API.
+ * 打开文件选择器。
  *
- * Falls back to file input if API is not supported.
+ * 如果当前环境不支持 File System Access API，则退回到普通文件输入框。
  */
 export async function pickFile(): Promise<void> {
   if (!("showOpenFilePicker" in window)) {
@@ -40,11 +40,11 @@ export async function pickFile(): Promise<void> {
   }
 
   try {
-    // Use File System Access API to pick a file
+    // 优先使用 File System Access API，这样后续可以直接重新读取磁盘上的同一文件。
     const handles = await window.showOpenFilePicker({
       types: [
         {
-          description: "Typst files",
+          description: "Typst 文件",
           accept: {
             "text/plain": [".typ", ".txt"],
           },
@@ -59,15 +59,15 @@ export async function pickFile(): Promise<void> {
       processFile(file, handle);
     }
   } catch (error) {
-    // User cancelled or error occurred
+    // 用户取消选择时不提示，其他错误则打印到控制台。
     if ((error as Error).name !== "AbortError") {
-      console.error("Error picking file:", error);
+      console.error("选择文件时出错：", error);
     }
   }
 }
 
 /**
- * Handles file input change event.
+ * 处理普通文件输入框的变更事件。
  */
 export function handleFileInputChange(event: Event): void {
   const input = event.target as HTMLInputElement;
@@ -75,7 +75,7 @@ export function handleFileInputChange(event: Event): void {
 
   if (files && files.length > 0) {
     processFile(files[0]);
-    // without this, selecting the same file again wouldn't trigger a change event
+    // 清空值，确保再次选择同一个文件时也会触发 change 事件。
     input.value = "";
   }
 }

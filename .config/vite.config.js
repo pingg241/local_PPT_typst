@@ -15,6 +15,19 @@ export default defineConfig(({ command }) => ({
     emptyOutDir: true,
     rollupOptions: {
       input,
+      output: {
+        manualChunks(id) {
+          if (/[\\/]monaco-editor[\\/]/u.test(id)) {
+            return "monaco";
+          }
+
+          if (/[\\/]web[\\/]src[\\/](editor-runtime|tinymist-lsp)/u.test(id)) {
+            return "typst-editor";
+          }
+
+          return undefined;
+        },
+      },
     },
   },
   server: {

@@ -14,6 +14,7 @@ export default defineConfig([
     {
         // Globally ignore the following paths
         ignores: [
+            "build/",
             "node_modules/",
             "web/pkg/",
             "tmp/",
